@@ -1,0 +1,19 @@
+Let's go back to the electrons. They do not fly around the nucleus randomly. They move in layers. We call these layers shells.
+
+In our simple model, the first shell can hold up to two electrons. The second shell can hold up to eight.
+
+Let's build some atoms. Hydrogen has one electron. It goes into the first shell.
+
+Helium has two electrons. Now the first shell is full.
+
+Carbon has six electrons. Two in the first shell, and four in the second shell. We write this as two, four.
+
+Oxygen has eight electrons. Two, and six.
+
+Neon has ten electrons. Two, and eight. Now both shells are full.
+
+Atoms with full shells are very stable. They do not like to react with other atoms. That is why neon is so calm.
+
+Did you notice something? In every atom we built, the number of electrons is the same as the number of protons.
+
+Carbon has six protons and six electrons. Six plus and six minus. They balance each other. So the whole atom has no charge.

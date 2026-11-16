@@ -1,0 +1,1020 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atom Studio</title>
+<meta name="description" content="Animated visuals for Chemistry in English, Episode 1: What Is Everything Made Of?">
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: rgba(21, 28, 51, 0.92);
+    --panel-line: rgba(140, 160, 220, 0.25);
+    --ink: #e8ecf8;
+    --muted: #9aa6c8;
+    --accent: #ffcf5a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  canvas { display: block; background: var(--bg); }
+  #ui { position: fixed; top: 12px; right: 12px; width: 300px; max-width: calc(100vw - 32px);
+    background: var(--panel); border: 1px solid var(--panel-line); border-radius: 12px;
+    padding: 12px; font-size: 13px; line-height: 1.4; backdrop-filter: blur(6px); z-index: 2; }
+  #ui.hidden { display: none; }
+  #ui h1 { font-size: 14px; margin: 0 0 8px; letter-spacing: .02em; }
+  #ui .row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; align-items: center; }
+  #ui button, #ui select { background: #222c4d; color: var(--ink); border: 1px solid var(--panel-line);
+    border-radius: 8px; padding: 6px 10px; font: inherit; cursor: pointer; }
+  #ui button:hover { background: #2c3963; }
+  #ui button.on { background: var(--accent); color: #1a1a1a; border-color: var(--accent); }
+  #status { color: var(--accent); font-variant-numeric: tabular-nums; }
+  #ui details { margin-top: 8px; color: var(--muted); }
+  #ui summary { cursor: pointer; color: var(--ink); }
+  #ui kbd { background: #222c4d; border: 1px solid var(--panel-line); border-radius: 4px; padding: 0 5px; font-size: 12px; }
+  #hint { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); color: var(--muted);
+    font-size: 12px; opacity: .7; pointer-events: none; }
+  #hint.hidden { display: none; }
+  @media (max-width: 640px) {
+    #ui { top: auto; bottom: 12px; right: 16px; left: 16px; width: auto; max-width: none; }
+    #hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="cv" aria-label="Animated chemistry scene"></canvas></div>
+
+<div id="ui">
+  <h1>Atom Studio · Episode 1</h1>
+  <div class="row" id="sceneBtns"></div>
+  <div class="row">
+    <button id="prev" title="Previous step (←)">◀ Prev</button>
+    <button id="next" title="Next step (→ / Space)">Next ▶</button>
+    <span id="status"></span>
+  </div>
+  <div class="row" id="freeRow">
+    <label for="elSel">Element</label>
+    <select id="elSel"></select>
+  </div>
+  <div class="row">
+    <button id="tUz" title="U">Uzbek</button>
+    <button id="tLabels" title="L">Labels</button>
+    <button id="tPause" title="P">Pause</button>
+    <button id="tFull" title="F">Fullscreen</button>
+    <button id="tHide" title="H">Hide panel</button>
+  </div>
+  <details>
+    <summary>Keyboard shortcuts</summary>
+    <div><kbd>1</kbd>–<kbd>6</kbd> scene · <kbd>0</kbd> free mode</div>
+    <div><kbd>→</kbd> / <kbd>Space</kbd> next step · <kbd>←</kbd> back</div>
+    <div><kbd>R</kbd> replay step · <kbd>H</kbd> hide panel</div>
+    <div><kbd>U</kbd> Uzbek · <kbd>L</kbd> labels · <kbd>P</kbd> pause · <kbd>F</kbd> fullscreen</div>
+    <div>Free mode: <kbd>↑</kbd>/<kbd>↓</kbd> change element</div>
+  </details>
+</div>
+<div id="hint">Press H to hide the panel for recording</div>
+
+<script>
+(() => {
+'use strict';
+
+// ---------- Stage ----------
+const W = 1920, H = 1080;
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const s = Math.min(innerWidth / W, innerHeight / H);
+  cv.style.width = Math.round(W * s) + 'px';
+  cv.style.height = Math.round(H * s) + 'px';
+  cv.width = Math.round(W * s * dpr);
+  cv.height = Math.round(H * s * dpr);
+}
+addEventListener('resize', resize);
+resize();
+
+// ---------- Palette ----------
+const C = {
+  bg: '#0b1020', ink: '#e8ecf8', muted: '#9aa6c8', accent: '#ffcf5a',
+  proton: '#ff6b6b', neutron: '#9aa4bd', electron: '#4dd8ff',
+  ring: 'rgba(160,180,255,0.30)', good: '#7ee08a', uz: '#8fe3a8',
+  panel: 'rgba(20,27,52,0.92)', line: 'rgba(140,160,220,0.35)',
+  hydrogen: '#f3f6ff', oxygen: '#ff5d5d'
+};
+const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+
+// ---------- Data ----------
+const ELEMENTS = [
+  { z: 1,  sym: 'H',  name: 'Hydrogen',  uz: 'Vodorod',  n: 0,  shells: [1] },
+  { z: 2,  sym: 'He', name: 'Helium',    uz: 'Geliy',    n: 2,  shells: [2] },
+  { z: 3,  sym: 'Li', name: 'Lithium',   uz: 'Litiy',    n: 4,  shells: [2, 1] },
+  { z: 4,  sym: 'Be', name: 'Beryllium', uz: 'Berilliy', n: 5,  shells: [2, 2] },
+  { z: 5,  sym: 'B',  name: 'Boron',     uz: 'Bor',      n: 6,  shells: [2, 3] },
+  { z: 6,  sym: 'C',  name: 'Carbon',    uz: 'Uglerod',  n: 6,  shells: [2, 4] },
+  { z: 7,  sym: 'N',  name: 'Nitrogen',  uz: 'Azot',     n: 7,  shells: [2, 5] },
+  { z: 8,  sym: 'O',  name: 'Oxygen',    uz: 'Kislorod', n: 8,  shells: [2, 6] },
+  { z: 9,  sym: 'F',  name: 'Fluorine',  uz: 'Ftor',     n: 10, shells: [2, 7] },
+  { z: 10, sym: 'Ne', name: 'Neon',      uz: 'Neon',     n: 10, shells: [2, 8] },
+  { z: 11, sym: 'Na', name: 'Sodium',    uz: 'Natriy',   n: 12, shells: [2, 8, 1] },
+  { z: 12, sym: 'Mg', name: 'Magnesium', uz: 'Magniy',   n: 12, shells: [2, 8, 2] }
+];
+const EL = z => ELEMENTS[z - 1];
+
+const VOCAB = {
+  matter:   { en: 'matter',        ipa: '/ˈmætə/',            uz: 'modda (materiya)',      def: 'anything that has mass and takes up space' },
+  atom:     { en: 'atom',          ipa: '/ˈætəm/',            uz: 'atom',                  def: 'a very small particle — all matter is made of atoms' },
+  nucleus:  { en: 'nucleus',       ipa: '/ˈnjuːkliəs/',       uz: 'yadro',                 def: 'the very small, heavy centre of an atom' },
+  mass:     { en: 'mass',          ipa: '/mæs/',              uz: 'massa',                 def: 'the amount of matter in an object (g, kg)' },
+  proton:   { en: 'proton',        ipa: '/ˈprəʊtɒn/',         uz: 'proton',                def: 'a particle in the nucleus with a positive (+) charge' },
+  neutron:  { en: 'neutron',       ipa: '/ˈnjuːtrɒn/',        uz: 'neytron',               def: 'a particle in the nucleus with no charge' },
+  electron: { en: 'electron',      ipa: '/ɪˈlektrɒn/',        uz: 'elektron',              def: 'a very light particle with a negative (−) charge' },
+  charge:   { en: 'charge',        ipa: '/tʃɑːdʒ/',           uz: 'zaryad',                def: 'positive, negative or zero — opposites attract' },
+  atomicNumber: { en: 'atomic number', ipa: '/əˈtɒmɪk ˈnʌmbə/', uz: 'tartib raqami',      def: 'the number of protons in the nucleus' },
+  element:  { en: 'element',       ipa: '/ˈelɪmənt/',         uz: 'kimyoviy element',      def: 'a pure substance made of only one kind of atom' },
+  shell:    { en: 'shell',         ipa: '/ʃel/',              uz: 'elektron qavat',        def: 'a layer around the nucleus where electrons move' },
+  molecule: { en: 'molecule',      ipa: '/ˈmɒlɪkjuːl/',       uz: 'molekula',              def: 'two or more atoms joined together' }
+};
+const VOCAB_ORDER = ['matter','atom','nucleus','mass','proton','neutron','electron','charge','atomicNumber','element','shell','molecule'];
+
+// ---------- State ----------
+const state = {
+  scene: 1, step: 0, stepStart: performance.now(),
+  simT: 0, last: performance.now(), paused: false,
+  showUz: true, showLabels: true, freeZ: 6
+};
+const elapsed = () => performance.now() - state.stepStart;
+
+// ---------- Helpers ----------
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const ease = x => { x = clamp(x); return x < .5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2; };
+const easeOutBack = x => { x = clamp(x); const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+const lerp = (a, b, t) => a + (b - a) * t;
+const prog = (ms = 700, delay = 0) => ease((elapsed() - delay) / ms);
+
+function text(str, x, y, o = {}) {
+  ctx.save();
+  ctx.globalAlpha *= (o.alpha ?? 1);
+  ctx.font = `${o.weight || 500} ${o.size || 32}px ${FONT}`;
+  ctx.fillStyle = o.color || C.ink;
+  ctx.textAlign = o.align || 'left';
+  ctx.textBaseline = o.base || 'alphabetic';
+  if (o.shadow) { ctx.shadowColor = 'rgba(0,0,0,.6)'; ctx.shadowBlur = 12; }
+  ctx.fillText(str, x, y);
+  ctx.restore();
+}
+function rrect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function panel(x, y, w, h, alpha = 1, r = 22) {
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  rrect(x, y, w, h, r);
+  ctx.fillStyle = C.panel; ctx.fill();
+  ctx.strokeStyle = C.line; ctx.lineWidth = 2; ctx.stroke();
+  ctx.restore();
+}
+function ball(x, y, r, color, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  const g = ctx.createRadialGradient(x - r * .35, y - r * .4, r * .1, x, y, r);
+  g.addColorStop(0, '#ffffff');
+  g.addColorStop(.25, color);
+  g.addColorStop(1, shade(color, -0.45));
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+function glow(x, y, r, color, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+function shade(hex, amt) {
+  const n = parseInt(hex.slice(1), 16);
+  let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  const f = v => Math.round(amt < 0 ? v * (1 + amt) : v + (255 - v) * amt);
+  return `rgb(${f(r)},${f(g)},${f(b)})`;
+}
+function label(x1, y1, x2, y2, str, color = C.ink, alpha = 1, size = 34) {
+  if (!state.showLabels) return;
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.strokeStyle = color; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x1, y1, 5, 0, Math.PI * 2); ctx.fill();
+  const right = x2 >= x1;
+  text(str, x2 + (right ? 14 : -14), y2 + size * .35, { size, weight: 700, color, align: right ? 'left' : 'right', shadow: true });
+  ctx.restore();
+}
+
+// ---------- Background ----------
+const STARS = Array.from({ length: 110 }, (_, i) => {
+  const r = Math.sin(i * 12.9898) * 43758.5453;
+  const r2 = Math.sin(i * 78.233) * 12345.6789;
+  return { x: (r - Math.floor(r)) * W, y: (r2 - Math.floor(r2)) * H, s: 1 + (i % 3), sp: 4 + (i % 5) * 3 };
+});
+function drawBg() {
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+  const g = ctx.createRadialGradient(W * .55, H * .45, 50, W * .55, H * .45, W * .7);
+  g.addColorStop(0, 'rgba(60,80,170,0.22)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(200,215,255,0.35)';
+  for (const s of STARS) {
+    const x = (s.x + state.simT * s.sp) % W;
+    ctx.fillRect(x, s.y, s.s, s.s);
+  }
+}
+function drawWatermark() {
+  text('Chemistry in English · Episode 1', 48, 64, { size: 26, weight: 600, color: C.muted, alpha: .8 });
+}
+function heading(str, alpha = 1, y = 120, size = 56) {
+  text(str, W / 2, y, { size, weight: 800, align: 'center', alpha, shadow: true });
+}
+
+// ---------- Vocabulary card ----------
+function vocabCard(key, alpha = 1) {
+  const v = VOCAB[key]; if (!v) return;
+  const a = alpha * prog(500, 150);
+  const x = 56, w = 820, h = state.showUz ? 210 : 168, y = H - h - 48;
+  const dy = (1 - a) * 30;
+  ctx.save(); ctx.translate(0, dy);
+  panel(x, y, w, h, a);
+  ctx.save(); ctx.globalAlpha *= a;
+  ctx.fillStyle = C.accent; rrect(x, y, 10, h, 5); ctx.fill();
+  ctx.restore();
+  text('NEW WORD', x + 40, y + 46, { size: 22, weight: 700, color: C.muted, alpha: a });
+  text(v.en, x + 40, y + 112, { size: 72, weight: 800, color: C.accent, alpha: a });
+  ctx.font = `800 72px ${FONT}`;
+  const ew = ctx.measureText(v.en).width;
+  text(v.ipa, x + 60 + ew, y + 108, { size: 32, weight: 500, color: C.muted, alpha: a });
+  text(v.def, x + 40, y + 156, { size: 30, weight: 500, color: C.ink, alpha: a });
+  if (state.showUz) text('UZ  ' + v.uz, x + 40, y + 196, { size: 30, weight: 700, color: C.uz, alpha: a });
+  ctx.restore();
+}
+
+// ---------- Atom drawing ----------
+const layoutCache = {};
+function nucleusLayout(p, n) {
+  const key = p + ':' + n;
+  if (layoutCache[key]) return layoutCache[key];
+  const total = p + n, out = [];
+  let pp = 0, nn = 0;
+  for (let i = 0; i < total; i++) {
+    let type;
+    if (pp >= p) type = 'n';
+    else if (nn >= n) type = 'p';
+    else type = (pp / p <= nn / n) ? 'p' : 'n';
+    if (type === 'p') pp++; else nn++;
+    const r = Math.sqrt(i + (total > 1 ? .5 : 0)) * 1.05;
+    const th = i * 2.39996323;
+    out.push({ type, x: Math.cos(th) * r, y: Math.sin(th) * r, idx: type === 'p' ? pp : nn });
+  }
+  layoutCache[key] = out;
+  return out;
+}
+const PR = 17; // particle radius at scale 1
+function nucleusRadius(el, sc = 1) { return (Math.sqrt(el.z + el.n) * 1.05 * PR + PR) * sc; }
+
+function drawNucleus(cx, cy, el, sc = 1, o = {}) {
+  const parts = nucleusLayout(el.z, el.n);
+  const a = o.alpha ?? 1;
+  glow(cx, cy, nucleusRadius(el, sc) * 2.2, 'rgba(255,140,120,0.35)', a * (o.glow ?? 1));
+  const order = parts.map((q, i) => i).reverse();
+  for (const i of order) {
+    const q = parts[i];
+    const isP = q.type === 'p';
+    let pa = a;
+    if (o.dimP && isP) pa *= .22;
+    if (o.dimN && !isP) pa *= .22;
+    if (o.maxP != null && isP && q.idx > o.maxP) continue;
+    const wob = o.still ? 0 : Math.sin(state.simT * 3 + i) * 0.6;
+    const x = cx + q.x * PR * sc + wob, y = cy + q.y * PR * sc + wob;
+    ball(x, y, PR * sc, isP ? C.proton : C.neutron, pa);
+    if (sc >= 1.4 && isP) text('+', x, y + 1, { size: 22 * sc / 1.4, weight: 900, color: '#fff', align: 'center', base: 'middle', alpha: pa });
+  }
+  if (o.numbers) for (const q of parts) {
+    if (q.type !== 'p' || q.idx > o.numbers) continue;
+    const x = cx + q.x * PR * sc, y = cy + q.y * PR * sc;
+    ctx.save(); ctx.globalAlpha = a;
+    ctx.beginPath(); ctx.arc(x, y, 20, 0, Math.PI * 2); ctx.fillStyle = C.accent; ctx.fill(); ctx.restore();
+    text(String(q.idx), x, y + 1, { size: 28, weight: 900, color: '#1a1a1a', align: 'center', base: 'middle', alpha: a });
+  }
+}
+const SHELL_R = [150, 235, 320];
+function drawShellRings(cx, cy, count, sc = 1, alpha = 1, highlight = -1) {
+  ctx.save();
+  for (let i = 0; i < count; i++) {
+    ctx.globalAlpha = alpha * (highlight === i ? 1 : .9);
+    ctx.strokeStyle = highlight === i ? C.accent : C.ring;
+    ctx.lineWidth = highlight === i ? 3.5 : 2.5;
+    ctx.setLineDash(highlight === i ? [] : [10, 10]);
+    ctx.beginPath(); ctx.arc(cx, cy, SHELL_R[i] * sc, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.restore();
+}
+function electronPos(cx, cy, shells, sc, si, j) {
+  const n = shells[si];
+  const ang = (j / n) * Math.PI * 2 + state.simT * (0.9 / (si + 1)) + si * 0.6;
+  return [cx + Math.cos(ang) * SHELL_R[si] * sc, cy + Math.sin(ang) * SHELL_R[si] * sc];
+}
+function drawElectrons(cx, cy, shells, sc = 1, alpha = 1, maxCount = 99) {
+  let k = 0;
+  for (let si = 0; si < shells.length; si++) {
+    for (let j = 0; j < shells[si]; j++) {
+      if (k++ >= maxCount) return;
+      const [x, y] = electronPos(cx, cy, shells, sc, si, j);
+      glow(x, y, 26 * sc, 'rgba(77,216,255,0.55)', alpha);
+      ball(x, y, 10 * sc, C.electron, alpha);
+      if (sc >= 1) text('−', x, y + 1, { size: 18 * sc, weight: 900, color: '#062a35', align: 'center', base: 'middle', alpha });
+    }
+  }
+}
+function drawAtom(cx, cy, el, sc = 1, o = {}) {
+  const a = o.alpha ?? 1;
+  drawShellRings(cx, cy, el.shells.length, sc, a * (o.ringAlpha ?? 1), o.highlightShell ?? -1);
+  drawNucleus(cx, cy, el, sc * (o.nucScale ?? 1), { alpha: a, dimP: o.dimP, dimN: o.dimN });
+  drawElectrons(cx, cy, el.shells, sc, a * (o.eAlpha ?? 1), o.maxE ?? 99);
+}
+
+// Periodic-table style tile
+function elementTile(x, y, el, size = 300, alpha = 1, flash = 0) {
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  rrect(x, y, size, size, 24);
+  ctx.fillStyle = C.panel; ctx.fill();
+  ctx.lineWidth = 4; ctx.strokeStyle = flash > 0 ? C.accent : C.line; ctx.stroke();
+  if (flash > 0) { glow(x + size / 2, y + size / 2, size, `rgba(255,207,90,${.35 * flash})`); }
+  ctx.restore();
+  text(String(el.z), x + 26, y + 62, { size: 52, weight: 800, color: C.accent, alpha });
+  text(el.sym, x + size / 2, y + size * .62, { size: size * .38, weight: 800, align: 'center', alpha });
+  text(el.name, x + size / 2, y + size * .82, { size: size * .1, weight: 600, align: 'center', alpha });
+  if (state.showUz) text(el.uz, x + size / 2, y + size * .94, { size: size * .075, weight: 700, color: C.uz, align: 'center', alpha });
+}
+
+// ---------- Scene 1: Hook ----------
+function scene1(s) {
+  const p = prog(900);
+  if (s === 0) {
+    glow(W / 2, H / 2 - 40, 520, 'rgba(255,207,90,0.12)', p);
+    drawAtom(W / 2, H / 2 - 40, EL(6), 1.15, { alpha: .35 * p });
+    text('Chemistry in English', W / 2, H / 2 - 20, { size: 120, weight: 900, align: 'center', alpha: p, shadow: true });
+    text('Episode 1 · What Is Everything Made Of?', W / 2, H / 2 + 70, { size: 48, weight: 600, color: C.accent, align: 'center', alpha: prog(900, 400), shadow: true });
+    if (state.showUz) text('1-qism · Hamma narsa nimadan tuzilgan?', W / 2, H / 2 + 135, { size: 36, weight: 600, color: C.uz, align: 'center', alpha: prog(900, 800) });
+    return;
+  }
+  drawWatermark();
+  if (s === 1) {
+    const items = [
+      ['phone', 'your phone'], ['desk', 'your desk'], ['glass', 'water'], ['air', 'air'], ['person', 'you']
+    ];
+    items.forEach((it, i) => {
+      const a = prog(500, 250 * i);
+      const x = 260 + i * 350, y = 560 + Math.sin(state.simT * 1.5 + i) * 10;
+      ctx.save(); ctx.globalAlpha = a; drawIcon(it[0], x, y); ctx.restore();
+      text(it[1], x, y + 170, { size: 36, weight: 600, align: 'center', alpha: a, color: C.muted });
+    });
+    heading('What is everything made of?', prog(700, 1300), 230, 84);
+    return;
+  }
+  if (s === 2) {
+    heading('matter = has mass + takes up space', p, 170, 60);
+    const items = [['stone', 'stone'], ['glass', 'water'], ['air', 'air']];
+    items.forEach((it, i) => {
+      const a = prog(500, 300 + 300 * i);
+      const x = 560 + i * 400, y = 430;
+      ctx.save(); ctx.globalAlpha = a; drawIcon(it[0], x, y); ctx.restore();
+      text(it[1], x, y + 165, { size: 38, weight: 700, align: 'center', alpha: a });
+      text('✓ matter', x, y + 215, { size: 30, weight: 700, color: C.good, align: 'center', alpha: a });
+    });
+    vocabCard('matter');
+    return;
+  }
+  if (s === 3) {
+    // zoom tunnel
+    const t = elapsed() / 1000;
+    for (let i = 0; i < 14; i++) {
+      const ph = ((t * 0.55 + i / 14) % 1);
+      const r = Math.pow(ph, 2.2) * 1400;
+      ctx.save();
+      ctx.globalAlpha = (1 - ph) * .9 * Math.min(1, t);
+      ctx.strokeStyle = i % 2 ? C.electron : C.accent;
+      ctx.lineWidth = 2 + ph * 6;
+      ctx.beginPath(); ctx.arc(W / 2, H / 2, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+    glow(W / 2, H / 2, 160, 'rgba(255,255,255,0.35)', 1);
+    text('zoom in…', W / 2, H - 120, { size: 48, weight: 700, color: C.muted, align: 'center', alpha: p });
+  }
+}
+function drawIcon(kind, x, y) {
+  ctx.save();
+  ctx.lineWidth = 6; ctx.strokeStyle = C.ink; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  switch (kind) {
+    case 'phone':
+      rrect(x - 55, y - 100, 110, 200, 18); ctx.fillStyle = '#26314f'; ctx.fill(); ctx.stroke();
+      rrect(x - 42, y - 80, 84, 150, 6); ctx.fillStyle = '#4dd8ff55'; ctx.fill();
+      ctx.beginPath(); ctx.arc(x, y + 85, 7, 0, 7); ctx.fillStyle = C.ink; ctx.fill(); break;
+    case 'desk':
+      ctx.fillStyle = '#8a5a35';
+      ctx.fillRect(x - 110, y - 40, 220, 26); ctx.strokeRect(x - 110, y - 40, 220, 26);
+      ctx.beginPath(); ctx.moveTo(x - 95, y - 14); ctx.lineTo(x - 95, y + 95); ctx.moveTo(x + 95, y - 14); ctx.lineTo(x + 95, y + 95); ctx.stroke(); break;
+    case 'glass':
+      ctx.beginPath(); ctx.moveTo(x - 60, y - 100); ctx.lineTo(x - 45, y + 100); ctx.lineTo(x + 45, y + 100); ctx.lineTo(x + 60, y - 100); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x - 53, y - 30); ctx.lineTo(x - 45, y + 95); ctx.lineTo(x + 45, y + 95); ctx.lineTo(x + 53, y - 30); ctx.closePath();
+      ctx.fillStyle = 'rgba(77,170,255,0.6)'; ctx.fill(); break;
+    case 'air':
+      ctx.strokeStyle = '#bfe9ff';
+      for (let i = 0; i < 3; i++) {
+        const yy = y - 60 + i * 60, sh = Math.sin(state.simT * 2 + i) * 12;
+        ctx.beginPath(); ctx.moveTo(x - 100 + sh, yy);
+        ctx.bezierCurveTo(x - 40 + sh, yy - 30, x + 20 + sh, yy + 30, x + 70 + sh, yy);
+        ctx.arc(x + 70 + sh, yy - 18, 18, Math.PI / 2, -Math.PI, true); ctx.stroke();
+      } break;
+    case 'person':
+      ctx.fillStyle = '#ffcf5a';
+      ctx.beginPath(); ctx.arc(x, y - 60, 40, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x - 70, y + 100); ctx.quadraticCurveTo(x - 70, y - 10, x, y - 10); ctx.quadraticCurveTo(x + 70, y - 10, x + 70, y + 100); ctx.closePath(); ctx.fill(); break;
+    case 'stone':
+      ctx.fillStyle = '#7d8495';
+      ctx.beginPath(); ctx.moveTo(x - 100, y + 60); ctx.lineTo(x - 80, y - 30); ctx.lineTo(x - 20, y - 80); ctx.lineTo(x + 60, y - 60);
+      ctx.lineTo(x + 105, y + 10); ctx.lineTo(x + 80, y + 80); ctx.lineTo(x - 40, y + 95); ctx.closePath(); ctx.fill(); ctx.stroke(); break;
+  }
+  ctx.restore();
+}
+
+// ---------- Scene 2: How small? ----------
+function scene2(s) {
+  drawWatermark();
+  const bandY = H / 2 - 20, bandH = 220;
+  if (s === 0 || s === 1) {
+    const p = prog(800);
+    ctx.save();
+    ctx.translate(W / 2, bandY); ctx.rotate(-0.06);
+    ctx.globalAlpha = p;
+    // hair band
+    const g = ctx.createLinearGradient(0, -bandH / 2, 0, bandH / 2);
+    g.addColorStop(0, '#3b2414'); g.addColorStop(.5, '#7a4f2e'); g.addColorStop(1, '#3b2414');
+    ctx.fillStyle = g; ctx.fillRect(-W, -bandH / 2, W * 2, bandH);
+    ctx.strokeStyle = 'rgba(255,220,180,0.15)'; ctx.lineWidth = 2;
+    for (let i = -6; i <= 6; i++) { ctx.beginPath(); ctx.moveTo(-W, i * 16); ctx.lineTo(W, i * 16 + Math.sin(i) * 6); ctx.stroke(); }
+    if (s === 1) {
+      const z = ease(elapsed() / 2200);
+      ctx.save();
+      ctx.beginPath(); ctx.rect(-W, -bandH / 2, W * 2, bandH); ctx.clip();
+      ctx.fillStyle = `rgba(11,16,32,${.85 * z})`; ctx.fillRect(-W, -bandH / 2, W * 2, bandH);
+      const cell = lerp(3, 44, z);
+      const rows = Math.ceil(bandH / cell) + 1;
+      for (let r = 0; r < rows; r++) {
+        for (let x = -W; x < W; x += cell) {
+          const off = (r % 2) * cell / 2;
+          const yy = -bandH / 2 + r * cell * .87;
+          ball(x + off, yy, cell * .42, '#ffcf5a', z);
+        }
+      }
+      ctx.restore();
+    }
+    ctx.restore();
+    // width marker
+    const mx = 1380;
+    ctx.save(); ctx.globalAlpha = p; ctx.strokeStyle = C.accent; ctx.lineWidth = 3;
+    const y1 = bandY - bandH / 2 - 60 + 90 * 0.06 * 0, y2 = bandY + bandH / 2 + 60;
+    ctx.beginPath(); ctx.moveTo(mx, y1 - 140); ctx.lineTo(mx, y2 - 50); ctx.stroke();
+    ctx.restore();
+    if (s === 0) {
+      heading('One human hair', p, 160, 64);
+      text('≈ 0.1 mm wide', mx + 20, bandY - 200, { size: 40, weight: 700, color: C.accent, alpha: p });
+      text('(one tenth of a millimetre)', W / 2, H - 140, { size: 36, color: C.muted, align: 'center', alpha: prog(700, 600) });
+    } else {
+      heading('Zoom in…', 1, 160, 64);
+      text('≈ 1 000 000 atoms', mx + 20, bandY - 250, { size: 48, weight: 800, color: C.accent, alpha: prog(700, 1500), shadow: true });
+      text('side by side', mx + 20, bandY - 198, { size: 34, weight: 600, color: C.ink, alpha: prog(700, 1700), shadow: true });
+    }
+    return;
+  }
+  if (s === 2) {
+    const p = easeOutBack(elapsed() / 900);
+    const cx = 1240, cy = 470;
+    glow(cx, cy, 330 * p, 'rgba(77,216,255,0.30)');
+    glow(cx, cy, 200 * p, 'rgba(77,216,255,0.30)');
+    drawAtom(cx, cy, EL(6), .9 * clamp(p, 0, 1.2), { alpha: clamp(p) });
+    heading('atom', prog(600), 140, 80);
+    vocabCard('atom');
+    return;
+  }
+  if (s === 3) {
+    const p = prog(800);
+    text('ἄτομος', W / 2, 250, { size: 120, weight: 700, align: 'center', alpha: p, color: C.accent });
+    text('atomos  =  “cannot be cut”', W / 2, 340, { size: 52, weight: 700, align: 'center', alpha: prog(700, 400) });
+    // atom splits open
+    const sp = ease((elapsed() - 2200) / 1200);
+    const cx = W / 2, cy = 680;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, cx, H); ctx.clip();
+    ctx.translate(-sp * 160, 0);
+    glow(cx, cy, 230, 'rgba(255,207,90,0.5)', p);
+    ctx.beginPath(); ctx.arc(cx, cy, 180, 0, 7); ctx.fillStyle = '#c99a2e'; ctx.globalAlpha = p; ctx.fill();
+    ctx.restore();
+    ctx.save();
+    ctx.beginPath(); ctx.rect(cx, 0, cx, H); ctx.clip();
+    ctx.translate(sp * 160, 0);
+    glow(cx, cy, 230, 'rgba(255,207,90,0.5)', p);
+    ctx.beginPath(); ctx.arc(cx, cy, 180, 0, 7); ctx.fillStyle = '#c99a2e'; ctx.globalAlpha = p; ctx.fill();
+    ctx.restore();
+    if (sp > 0) {
+      drawNucleus(cx, cy, EL(6), 1.2, { alpha: sp });
+      text('…but we CAN look inside!', W / 2, H - 70, { size: 46, weight: 800, align: 'center', color: C.electron, alpha: sp });
+    }
+  }
+}
+
+// ---------- Scene 3: Inside the atom ----------
+function scene3(s) {
+  drawWatermark();
+  const el = EL(6), cx = 1200, cy = 470;
+  const p = prog(700);
+  if (s === 0) {
+    drawShellRings(cx, cy, 2, 1.1, .25);
+    const pulse = 1 + Math.sin(state.simT * 4) * .04;
+    drawNucleus(cx, cy, el, 1.3 * pulse, { alpha: p });
+    label(cx + 60, cy - 50, cx + 280, cy - 230, 'nucleus', C.accent, prog(500, 400));
+    text('very small · very heavy', cx, 900, { size: 38, weight: 600, color: C.muted, align: 'center', alpha: prog(600, 700) });
+    vocabCard('nucleus'); return;
+  }
+  if (s === 1) {
+    drawAtom(cx, cy, el, 1.1, { eAlpha: .8 });
+    // mass bar
+    const bx = 1000, by = 860, bw = 760, bh = 46, f = ease((elapsed() - 400) / 1400);
+    panel(bx - 30, by - 80, bw + 60, 190, p, 18);
+    text('Where is the mass?', bx, by - 30, { size: 32, weight: 700, alpha: p });
+    ctx.save(); ctx.globalAlpha = p;
+    rrect(bx, by, bw, bh, 10); ctx.fillStyle = '#26314f'; ctx.fill();
+    rrect(bx, by, Math.max(20, bw * .9995 * f), bh, 10); ctx.fillStyle = C.proton; ctx.fill();
+    ctx.restore();
+    text('nucleus ≈ 99.97 %', bx + 16, by + 33, { size: 28, weight: 800, color: '#fff', alpha: f });
+    text('electrons ≈ 0.03 %', bx + bw, by + 88, { size: 26, weight: 600, color: C.electron, align: 'right', alpha: f });
+    vocabCard('mass'); return;
+  }
+  if (s === 2 || s === 3) {
+    const isP = s === 2;
+    drawShellRings(cx, cy, 2, 1.1, .2);
+    drawNucleus(cx, cy, el, 2.6, { dimN: isP, dimP: !isP, alpha: 1 });
+    const parts = nucleusLayout(el.z, el.n);
+    const target = parts.find(q => q.type === (isP ? 'p' : 'n') && Math.hypot(q.x, q.y) > 1.2) || parts[0];
+    const tx = cx + target.x * PR * 2.6, ty = cy + target.y * PR * 2.6;
+    if (isP) {
+      label(tx, ty, cx + 330, cy - 240, 'proton  +', C.proton, prog(500, 300), 44);
+      text('positive charge', cx + 344, cy - 180, { size: 32, weight: 600, color: C.muted, alpha: prog(500, 600) });
+      vocabCard('proton');
+    } else {
+      label(tx, ty, cx + 330, cy - 240, 'neutron  0', C.neutron, prog(500, 300), 44);
+      text('no charge — neutral', cx + 344, cy - 180, { size: 32, weight: 600, color: C.muted, alpha: prog(500, 600) });
+      text('neutron  →  neutral', cx, 900, { size: 46, weight: 800, color: C.accent, align: 'center', alpha: prog(600, 1500) });
+      vocabCard('neutron');
+    }
+    return;
+  }
+  if (s === 4) {
+    drawAtom(cx, cy, el, 1.1, { eAlpha: p });
+    const [ex, ey] = electronPos(cx, cy, el.shells, 1.1, 1, 0);
+    label(ex, ey, cx + 420, cy - 330, 'electron  −', C.electron, prog(500, 400), 44);
+    text('≈ 1/2000 of a proton’s mass', W / 2 + 200, 960, { size: 34, weight: 600, color: C.muted, align: 'center', alpha: prog(600, 1200) });
+    vocabCard('electron'); return;
+  }
+  if (s === 5) {
+    drawAtom(cx, cy, el, 1.1);
+    // attraction lines
+    ctx.save();
+    const t = state.simT;
+    for (let si = 0; si < el.shells.length; si++) for (let j = 0; j < el.shells[si]; j++) {
+      const [ex, ey] = electronPos(cx, cy, el.shells, 1.1, si, j);
+      ctx.globalAlpha = .5 * p;
+      ctx.strokeStyle = C.accent; ctx.lineWidth = 2; ctx.setLineDash([8, 10]); ctx.lineDashOffset = -t * 40;
+      ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(cx, cy); ctx.stroke();
+    }
+    ctx.restore();
+    drawNucleus(cx, cy, el, 1.1);
+    const items = [['+', 'positive', C.proton], ['−', 'negative', C.electron], ['0', 'zero', C.neutron]];
+    items.forEach((it, i) => {
+      const a = prog(400, 300 + i * 250), y = 220 + i * 90;
+      ball(1700, y, 30, it[2], a);
+      text(it[0], 1700, y + 2, { size: 36, weight: 900, color: '#fff', align: 'center', base: 'middle', alpha: a });
+      text(it[1], 1748, y + 12, { size: 34, weight: 700, alpha: a });
+    });
+    text('opposite charges attract', cx, 930, { size: 46, weight: 800, color: C.accent, align: 'center', alpha: prog(600, 1300), shadow: true });
+    vocabCard('charge'); return;
+  }
+  if (s === 6) {
+    // stadium comparison
+    const sx = W / 2, sy = 560, rx = 760, ry = 360;
+    heading('Most of an atom is empty space', p, 120, 60);
+    ctx.save(); ctx.globalAlpha = p;
+    // stands
+    ctx.beginPath(); ctx.ellipse(sx, sy, rx, ry, 0, 0, Math.PI * 2); ctx.fillStyle = '#1c2442'; ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = C.line; ctx.stroke();
+    for (let i = 1; i <= 4; i++) { ctx.beginPath(); ctx.ellipse(sx, sy, rx - i * 28, ry - i * 22, 0, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(140,160,220,0.15)'; ctx.stroke(); }
+    // field
+    rrect(sx - 470, sy - 220, 940, 440, 30); ctx.fillStyle = '#1f6b3a'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx, sy - 220); ctx.lineTo(sx, sy + 220); ctx.stroke();
+    ctx.beginPath(); ctx.arc(sx, sy, 80, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+    // pea nucleus
+    const pa = prog(500, 900);
+    glow(sx, sy, 40, 'rgba(255,107,107,0.9)', pa);
+    ball(sx, sy, 7, C.proton, pa);
+    label(sx + 8, sy - 6, sx + 260, sy - 150, 'nucleus = a pea', C.proton, pa, 38);
+    // electrons in the stands
+    const ea = prog(500, 1800);
+    for (let i = 0; i < 6; i++) {
+      const ang = state.simT * .35 + i * Math.PI / 3;
+      const x = sx + Math.cos(ang) * (rx - 40), y = sy + Math.sin(ang) * (ry - 30);
+      glow(x, y, 18, 'rgba(77,216,255,0.8)', ea);
+      ball(x, y, 6, C.electron, ea);
+    }
+    text('electrons: far away, up in the seats', sx, H - 60, { size: 40, weight: 700, color: C.electron, align: 'center', alpha: ea });
+  }
+}
+
+// ---------- Scene 4: Elements ----------
+const SHOW_Z = { 2: 1, 3: 2, 4: 6, 5: 8 };
+function scene4(s) {
+  drawWatermark();
+  const p = prog(700);
+  if (s === 0) {
+    const el = EL(6), cx = 820, cy = 470;
+    const n = clamp(Math.floor((elapsed() - 500) / 650) + 1, 0, 6);
+    drawNucleus(cx, cy, el, 2.6, { dimN: true, numbers: n, still: true });
+    const done = elapsed() > 500 + 650 * 6;
+    const a = done ? prog(500, 500 + 650 * 6) : 0;
+    text('6 protons', 1220, 380, { size: 56, weight: 800, color: C.proton, alpha: a });
+    text('atomic number = 6', 1220, 470, { size: 60, weight: 800, color: C.accent, alpha: prog(500, 500 + 650 * 6 + 400) });
+    vocabCard('atomicNumber'); return;
+  }
+  if (s === 1) {
+    // a jar of identical carbon atoms
+    const jx = 1180, jy = 200, jw = 520, jh = 560;
+    ctx.save(); ctx.globalAlpha = p;
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.moveTo(jx, jy); ctx.lineTo(jx, jy + jh); ctx.lineTo(jx + jw, jy + jh); ctx.lineTo(jx + jw, jy); ctx.stroke();
+    ctx.restore();
+    let k = 0;
+    for (let r = 0; r < 6; r++) for (let c = 0; c < 6; c++) {
+      const a = prog(250, 200 + k * 40); k++;
+      const x = jx + 50 + c * 84 + (r % 2) * 20 + Math.sin(state.simT * 2 + k) * 3, y = jy + jh - 50 - r * 84;
+      ball(x, y, 34, '#3a3f4f', a);
+      text('C', x, y + 2, { size: 32, weight: 800, align: 'center', base: 'middle', alpha: a });
+    }
+    text('only carbon atoms', jx + jw / 2, jy + jh + 70, { size: 40, weight: 700, align: 'center', alpha: prog(600, 1800) });
+    text('→ carbon is an element', jx + jw / 2, jy + jh + 125, { size: 40, weight: 800, color: C.accent, align: 'center', alpha: prog(600, 2300) });
+    vocabCard('element'); return;
+  }
+  if (SHOW_Z[s]) {
+    const el = EL(SHOW_Z[s]);
+    const pop = easeOutBack(elapsed() / 700);
+    drawAtom(640, 520, el, .95 * clamp(pop, 0, 1.15), { alpha: clamp(pop) });
+    elementTile(1240, 250, el, 380, p);
+    text(`${el.z} proton${el.z > 1 ? 's' : ''}`, 1430, 720, { size: 48, weight: 800, color: C.proton, align: 'center', alpha: prog(500, 400) });
+    return;
+  }
+  if (s === 6) {
+    const t = elapsed();
+    const flyT = ease((t - 600) / 1200);
+    const changed = t > 1800;
+    const el = changed ? EL(7) : EL(6);
+    const cx = 640, cy = 520;
+    drawAtom(cx, cy, el, .95);
+    if (!changed) {
+      const x = lerp(-60, cx, flyT), y = lerp(150, cy, flyT);
+      glow(x, y, 60, 'rgba(255,107,107,0.7)');
+      ball(x, y, 22, C.proton);
+      text('+', x, y + 1, { size: 28, weight: 900, color: '#fff', align: 'center', base: 'middle' });
+      if (flyT < 1) text('+1 proton', x + 40, y - 30, { size: 36, weight: 800, color: C.proton });
+    }
+    const fl = changed ? clamp(1 - (t - 1800) / 900) : 0;
+    if (fl > 0) glow(cx, cy, 300, `rgba(255,207,90,${.6 * fl})`);
+    elementTile(1240, 250, el, 380, 1, fl);
+    text(changed ? '6 + 1 = 7 protons' : '6 protons', 1430, 720, { size: 48, weight: 800, color: C.proton, align: 'center' });
+    if (changed) text('carbon → nitrogen', 1430, 800, { size: 44, weight: 800, color: C.accent, align: 'center', alpha: prog(600, 2000) });
+    return;
+  }
+  if (s === 7) periodicTable();
+}
+// periodic table layout: [row, col] for each Z
+function ptPos(z) {
+  if (z === 1) return [0, 0];
+  if (z === 2) return [0, 17];
+  const rowStarts = [[3, 10, 1], [11, 18, 2]];
+  for (const [a, b, r] of rowStarts) if (z >= a && z <= b) { const i = z - a; return [r, i < 2 ? i : i + 10]; }
+  if (z >= 19 && z <= 36) return [3, z - 19];
+  if (z >= 37 && z <= 54) return [4, z - 37];
+  {
+    const [base, row] = z >= 87 ? [87, 6] : [55, 5];
+    const i = z - base;
+    if (i < 2) return [row, i];
+    if (i < 17) return [row + 3, i + 1];        // f-block row (lanthanides / actinides)
+    return [row, i - 14];                         // cols 3..17
+  }
+  return [0, 0];
+}
+const SYMS = 'H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og'.split(' ');
+function periodicTable() {
+  const cell = 66, gap = 6, ox = (W - 18 * (cell + gap)) / 2, oy = 210;
+  const t = elapsed();
+  const shown = clamp(Math.floor(t / 22), 0, 118);
+  const hi = new Set([1, 2, 6, 7, 8, 10]);
+  for (let z = 1; z <= shown; z++) {
+    const [r, c] = ptPos(z);
+    const x = ox + c * (cell + gap), y = oy + r * (cell + gap) + (r >= 7 ? 24 : 0);
+    const a = clamp((t - z * 22) / 300);
+    ctx.save(); ctx.globalAlpha = a;
+    rrect(x, y, cell, cell, 8);
+    ctx.fillStyle = hi.has(z) ? 'rgba(255,207,90,0.25)' : 'rgba(77,120,255,0.18)'; ctx.fill();
+    ctx.strokeStyle = hi.has(z) ? C.accent : 'rgba(140,160,220,0.4)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.restore();
+    text(SYMS[z - 1], x + cell / 2, y + cell / 2 + 10, { size: 26, weight: 800, align: 'center', alpha: a, color: hi.has(z) ? C.accent : C.ink });
+    text(String(z), x + 6, y + 18, { size: 14, weight: 600, alpha: a * .8, color: C.muted });
+  }
+  const counter = shown;
+  text(`${counter} elements`, W / 2, 140, { size: 72, weight: 900, align: 'center', color: counter === 118 ? C.accent : C.ink, shadow: true });
+  text('letters → words   ·   elements → all matter', W / 2, H - 50, { size: 40, weight: 700, color: C.muted, align: 'center', alpha: prog(700, 3200) });
+}
+
+// ---------- Scene 5: Shells ----------
+const SHELL_STEPS = { 1: 1, 2: 2, 3: 6, 4: 8, 5: 10 };
+function scene5(s) {
+  drawWatermark();
+  const p = prog(700);
+  const cx = 820, cy = 500, sc = 1.25;
+  if (s === 0) {
+    drawShellRings(cx, cy, 2, sc, p);
+    glow(cx, cy, 90, 'rgba(255,140,120,0.4)', p);
+    ball(cx, cy, 34, C.proton, p);
+    label(cx + SHELL_R[0] * sc * .71, cy - SHELL_R[0] * sc * .71, 1380, 250, 'shell 1 — max 2', C.accent, prog(500, 500), 40);
+    label(cx + SHELL_R[1] * sc * .87, cy - SHELL_R[1] * sc * .5 + 120, 1380, 400, 'shell 2 — max 8', C.electron, prog(500, 1100), 40);
+    vocabCard('shell'); return;
+  }
+  if (SHELL_STEPS[s]) {
+    const el = EL(SHELL_STEPS[s]);
+    const n = clamp(Math.floor((elapsed() - 300) / 220) + 1, 0, el.z);
+    drawShellRings(cx, cy, 2, sc, 1);
+    drawNucleus(cx, cy, el, sc, { alpha: p });
+    drawElectrons(cx, cy, el.shells, sc, 1, n);
+    // info panel
+    const px = 1250, py = 200;
+    elementTile(px, py, el, 240, p);
+    text(`${el.z} electron${el.z > 1 ? 's' : ''}`, px + 280, py + 90, { size: 48, weight: 800, color: C.electron, alpha: p });
+    const filled = n >= el.z;
+    text(el.shells.join(', '), px + 280, py + 200, { size: 96, weight: 900, color: C.accent, alpha: filled ? prog(500, 300 + el.z * 220) : 0 });
+    const full1 = el.shells[0] === 2, full2 = el.shells[1] === 8;
+    const fa = filled ? prog(500, 500 + el.z * 220) : 0;
+    if (full1) badge(cx - SHELL_R[0] * sc - 10, cy - SHELL_R[0] * sc - 10, 'FULL', fa);
+    if (full2) badge(cx + SHELL_R[1] * sc - 110, cy - SHELL_R[1] * sc - 10, 'FULL', fa);
+    if (el.z === 10) text('both shells full → stable', px, py + 420, { size: 44, weight: 800, color: C.good, alpha: fa });
+    return;
+  }
+  if (s === 6) {
+    const el = EL(6);
+    drawAtom(cx, cy, el, sc);
+    const px = 1340;
+    const rows = [['6 protons', '+6', C.proton], ['6 electrons', '−6', C.electron]];
+    rows.forEach((r, i) => {
+      const a = prog(500, 300 + i * 600), y = 330 + i * 120;
+      text(r[0], px, y, { size: 48, weight: 700, alpha: a });
+      text(r[1], px + 400, y, { size: 56, weight: 900, color: r[2], alpha: a });
+    });
+    ctx.save(); ctx.globalAlpha = prog(500, 1500); ctx.strokeStyle = C.ink; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(px, 500); ctx.lineTo(px + 500, 500); ctx.stroke(); ctx.restore();
+    text('total charge', px, 580, { size: 48, weight: 700, alpha: prog(500, 1800) });
+    text('0', px + 400, 580, { size: 72, weight: 900, color: C.good, alpha: prog(500, 2100) });
+  }
+}
+function badge(x, y, str, a) {
+  if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha = a;
+  rrect(x, y - 34, 100, 44, 22); ctx.fillStyle = C.good; ctx.fill();
+  ctx.restore();
+  text(str, x + 50, y - 3, { size: 26, weight: 900, color: '#0b2a14', align: 'center', alpha: a });
+}
+
+// ---------- Scene 6: Molecules & review ----------
+function waterMolecule(cx, cy, k = 1, sc = 1, alpha = 1, labels = true) {
+  const ang = 104.5 / 2 * Math.PI / 180, d = 150 * sc;
+  const hx = Math.sin(ang) * d, hy = Math.cos(ang) * d;
+  const H1 = [lerp(cx - 620 * sc, cx - hx, k), lerp(cy + 260 * sc, cy + hy, k)];
+  const H2 = [lerp(cx + 620 * sc, cx + hx, k), lerp(cy + 260 * sc, cy + hy, k)];
+  const O = [cx, lerp(cy - 240 * sc, cy, k)];
+  if (k > .95) {
+    ctx.save(); ctx.globalAlpha = alpha * (k - .95) * 20; ctx.strokeStyle = '#d7dcef'; ctx.lineWidth = 22 * sc; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(H1[0], H1[1]); ctx.lineTo(O[0], O[1]); ctx.lineTo(H2[0], H2[1]); ctx.stroke(); ctx.restore();
+  }
+  ball(O[0], O[1], 105 * sc, C.oxygen, alpha);
+  ball(H1[0], H1[1], 68 * sc, C.hydrogen, alpha);
+  ball(H2[0], H2[1], 68 * sc, C.hydrogen, alpha);
+  if (labels) {
+    text('O', O[0], O[1] + 4, { size: 80 * sc, weight: 900, color: '#fff', align: 'center', base: 'middle', alpha });
+    text('H', H1[0], H1[1] + 3, { size: 56 * sc, weight: 900, color: '#29324f', align: 'center', base: 'middle', alpha });
+    text('H', H2[0], H2[1] + 3, { size: 56 * sc, weight: 900, color: '#29324f', align: 'center', base: 'middle', alpha });
+  }
+}
+function scene6(s) {
+  drawWatermark();
+  const p = prog(700);
+  if (s === 0) {
+    const k = ease((elapsed() - 600) / 1800);
+    waterMolecule(1200, 470, k, 1);
+    text('atoms join together → molecule', 1200, 780, { size: 44, weight: 800, color: C.accent, align: 'center', alpha: prog(600, 2400) });
+    vocabCard('molecule'); return;
+  }
+  if (s === 1) {
+    for (let i = 0; i < 7; i++) {
+      const x = (i * 311 + state.simT * (20 + i * 4)) % (W + 200) - 100;
+      const y = 140 + ((i * 173) % 800);
+      ctx.save(); ctx.translate(x, y); ctx.rotate(state.simT * .3 + i);
+      waterMolecule(0, 0, 1, .22, .25, false); ctx.restore();
+    }
+    waterMolecule(W / 2, 430, 1, 1);
+    text('H₂O', W / 2, 160, { size: 110, weight: 900, color: C.accent, align: 'center', alpha: p, shadow: true });
+    text('2 hydrogen  +  1 oxygen  =  water', W / 2, 760, { size: 52, weight: 800, align: 'center', alpha: prog(600, 500), shadow: true });
+    if (state.showUz) text('2 vodorod  +  1 kislorod  =  suv', W / 2, 830, { size: 38, weight: 700, color: C.uz, align: 'center', alpha: prog(600, 900) });
+    return;
+  }
+  if (s === 2) {
+    heading('12 new words', p, 130, 64);
+    const cols = 4, cw = 400, ch = state.showUz ? 170 : 140, gx = 30, gy = 30;
+    const ox = (W - (cols * cw + (cols - 1) * gx)) / 2, oy = 200;
+    VOCAB_ORDER.forEach((key, i) => {
+      const a = easeOutBack((elapsed() - 800 - i * 1050) / 500);
+      if (a <= 0) return;
+      const r = Math.floor(i / cols), c = i % cols;
+      const x = ox + c * (cw + gx), y = oy + r * (ch + gy);
+      ctx.save(); ctx.translate(x + cw / 2, y + ch / 2); ctx.scale(clamp(a, 0, 1.1), clamp(a, 0, 1.1)); ctx.translate(-(x + cw / 2), -(y + ch / 2));
+      panel(x, y, cw, ch, 1, 18);
+      text(String(i + 1), x + 22, y + 40, { size: 24, weight: 700, color: C.muted });
+      text(VOCAB[key].en, x + cw / 2, y + (state.showUz ? 82 : 88), { size: 48, weight: 800, color: C.accent, align: 'center' });
+      if (state.showUz) text(VOCAB[key].uz, x + cw / 2, y + 135, { size: 30, weight: 700, color: C.uz, align: 'center' });
+      ctx.restore();
+    });
+    return;
+  }
+  if (s === 3) {
+    const bounce = 1 + Math.sin(state.simT * 3) * .03;
+    ctx.save(); ctx.translate(W / 2, 430); ctx.scale(bounce, bounce);
+    ctx.globalAlpha = p;
+    ctx.beginPath(); ctx.arc(0, 0, 150, 0, Math.PI * 2); ctx.fillStyle = C.accent; ctx.fill();
+    ctx.fillStyle = '#1a1a1a'; ctx.fillRect(-50, -60, 34, 120); ctx.fillRect(16, -60, 34, 120);
+    ctx.restore();
+    text('Quiz time!', W / 2, 720, { size: 100, weight: 900, align: 'center', alpha: p, shadow: true });
+    text('Pause the video and answer the questions', W / 2, 800, { size: 44, weight: 600, color: C.muted, align: 'center', alpha: prog(600, 400) });
+    if (state.showUz) text('Videoni to‘xtating va savollarga javob bering', W / 2, 860, { size: 36, weight: 600, color: C.uz, align: 'center', alpha: prog(600, 800) });
+    return;
+  }
+  if (s === 4) {
+    drawAtom(W / 2, 440, EL(10), 1, { alpha: .5 * p });
+    text('Next episode', W / 2, 760, { size: 44, weight: 700, color: C.muted, align: 'center', alpha: p });
+    text('The Periodic Table', W / 2, 860, { size: 96, weight: 900, color: C.accent, align: 'center', alpha: prog(700, 400), shadow: true });
+    text('See you next time!', W / 2, 960, { size: 44, weight: 700, align: 'center', alpha: prog(700, 1200) });
+  }
+}
+
+// ---------- Free mode ----------
+function scene0() {
+  drawWatermark();
+  const el = EL(state.freeZ);
+  const p = easeOutBack(elapsed() / 600);
+  const cx = 760, cy = 540, sc = el.shells.length > 2 ? 1.25 : 1.4;
+  drawAtom(cx, cy, el, sc * clamp(p, 0, 1.1), { alpha: clamp(p) });
+  if (p >= 1) {
+    const [ex, ey] = electronPos(cx, cy, el.shells, sc, el.shells.length - 1, 0);
+    label(cx + 10, cy - 10, cx - 420, cy - 380, 'nucleus', C.accent, prog(400, 400), 34);
+    label(ex, ey, cx - 420, cy + 400, 'electron', C.electron, prog(400, 600), 34);
+  }
+  elementTile(1360, 160, el, 340, 1);
+  const lines = [
+    [`${el.z} protons`, C.proton], [`${el.n} neutrons`, C.neutron], [`${el.z} electrons`, C.electron], [`shells: ${el.shells.join(', ')}`, C.accent]
+  ];
+  lines.forEach((l, i) => text(l[0], 1360, 600 + i * 70, { size: 44, weight: 800, color: l[1] }));
+  text('↑ / ↓  change element', 1360, 920, { size: 26, color: C.muted });
+}
+
+// ---------- Scene table ----------
+const SCENES = {
+  0: { name: 'Free mode', steps: 1, draw: scene0 },
+  1: { name: 'Hook', steps: 4, draw: scene1 },
+  2: { name: 'How small?', steps: 4, draw: scene2 },
+  3: { name: 'Inside the atom', steps: 7, draw: scene3 },
+  4: { name: 'Elements', steps: 8, draw: scene4 },
+  5: { name: 'Shells', steps: 7, draw: scene5 },
+  6: { name: 'Molecules & review', steps: 5, draw: scene6 }
+};
+
+// ---------- Controls ----------
+const $ = id => document.getElementById(id);
+function go(scene, step = 0) {
+  state.scene = scene;
+  state.step = clamp(step, 0, SCENES[scene].steps - 1);
+  state.stepStart = performance.now();
+  syncUI();
+}
+function next() {
+  const sc = SCENES[state.scene];
+  if (state.step < sc.steps - 1) go(state.scene, state.step + 1);
+  else if (state.scene >= 1 && state.scene < 6) go(state.scene + 1, 0);
+}
+function prev() {
+  if (state.step > 0) go(state.scene, state.step - 1);
+  else if (state.scene > 1) go(state.scene - 1, SCENES[state.scene - 1].steps - 1);
+}
+function setFree(z) { state.freeZ = clamp(z, 1, ELEMENTS.length); go(0, 0); }
+
+const sceneBtns = $('sceneBtns');
+[1, 2, 3, 4, 5, 6, 0].forEach(n => {
+  const b = document.createElement('button');
+  b.textContent = n === 0 ? 'Free' : String(n);
+  b.title = SCENES[n].name + ` (key ${n})`;
+  b.dataset.scene = n;
+  b.onclick = () => go(n, 0);
+  sceneBtns.appendChild(b);
+});
+const sel = $('elSel');
+ELEMENTS.forEach(e => { const o = document.createElement('option'); o.value = e.z; o.textContent = `${e.z} · ${e.sym} · ${e.name}`; sel.appendChild(o); });
+sel.onchange = () => setFree(+sel.value);
+$('prev').onclick = prev; $('next').onclick = next;
+$('tUz').onclick = () => { state.showUz = !state.showUz; syncUI(); };
+$('tLabels').onclick = () => { state.showLabels = !state.showLabels; syncUI(); };
+$('tPause').onclick = () => { state.paused = !state.paused; syncUI(); };
+$('tFull').onclick = toggleFull;
+$('tHide').onclick = () => toggleHide();
+function toggleFull() {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
+  else document.exitFullscreen?.();
+}
+function toggleHide(force) {
+  const ui = $('ui'), hint = $('hint');
+  const hide = force ?? !ui.classList.contains('hidden');
+  ui.classList.toggle('hidden', hide); hint.classList.toggle('hidden', hide);
+  document.body.style.cursor = hide ? 'none' : '';
+}
+function syncUI() {
+  for (const b of sceneBtns.children) b.classList.toggle('on', +b.dataset.scene === state.scene);
+  $('tUz').classList.toggle('on', state.showUz);
+  $('tLabels').classList.toggle('on', state.showLabels);
+  $('tPause').classList.toggle('on', state.paused);
+  $('status').textContent = state.scene === 0 ? 'free mode' : `[${state.scene}.${state.step}]  ${state.step + 1}/${SCENES[state.scene].steps}`;
+  sel.value = state.freeZ;
+}
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'SELECT') return;
+  const k = e.key;
+  if (k >= '0' && k <= '6') { go(+k, 0); }
+  else if (k === 'ArrowRight' || k === ' ' || k === 'PageDown') { e.preventDefault(); next(); }
+  else if (k === 'ArrowLeft' || k === 'PageUp') { e.preventDefault(); prev(); }
+  else if (k === 'ArrowUp' && state.scene === 0) { e.preventDefault(); setFree(state.freeZ + 1); }
+  else if (k === 'ArrowDown' && state.scene === 0) { e.preventDefault(); setFree(state.freeZ - 1); }
+  else if (k === 'r' || k === 'R') go(state.scene, state.step);
+  else if (k === 'h' || k === 'H') toggleHide();
+  else if (k === 'u' || k === 'U') { state.showUz = !state.showUz; syncUI(); }
+  else if (k === 'l' || k === 'L') { state.showLabels = !state.showLabels; syncUI(); }
+  else if (k === 'p' || k === 'P') { state.paused = !state.paused; syncUI(); }
+  else if (k === 'f' || k === 'F') toggleFull();
+});
+cv.addEventListener('click', () => { if ($('ui').classList.contains('hidden')) next(); });
+
+// URL hash: #3.2 opens scene 3 step 2 (handy for re-takes); #clean hides the panel
+function fromHash() {
+  const h = location.hash.slice(1);
+  const m = h.match(/^(\d)(?:\.(\d+))?/);
+  if (m && SCENES[+m[1]]) go(+m[1], +(m[2] || 0));
+  if (/clean/.test(h)) toggleHide(true);
+}
+addEventListener('hashchange', fromHash);
+fromHash();
+syncUI();
+
+// ---------- Loop ----------
+function frame(now) {
+  const dt = Math.min(0.05, (now - state.last) / 1000);
+  state.last = now;
+  if (!state.paused) state.simT += dt;
+  ctx.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0);
+  drawBg();
+  SCENES[state.scene].draw(state.step);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
